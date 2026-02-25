@@ -128,8 +128,7 @@
     }
 
     .line-numbers {
-      padding: 16px 8px 16px 12px;
-      text-align: right;
+      padding: 16px 0;
       font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
       font-size: 13px;
       line-height: 1.6;
@@ -141,8 +140,46 @@
       border-right: 1px solid var(--border);
     }
 
-    #input {
+    .line-numbers .line-num {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      padding: 0 8px 0 12px;
+    }
+
+    .input-area {
+      position: relative;
       flex: 1;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .input-highlight {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      padding: 16px;
+      font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+      font-size: 13px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      overflow-wrap: break-word;
+      word-break: break-word;
+      color: transparent;
+      pointer-events: none;
+      overflow: hidden;
+    }
+
+    .error-mark {
+      background: rgba(233, 69, 96, 0.2);
+      text-decoration: wavy underline;
+      text-decoration-color: var(--accent);
+      text-decoration-skip-ink: none;
+    }
+
+    #input {
+      position: relative;
+      width: 100%;
+      height: 100%;
       background: transparent;
       color: var(--text);
       border: none;
@@ -160,12 +197,41 @@
     #output {
       flex: 1;
       overflow: auto;
-      padding: 16px;
       font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
       font-size: 13px;
       line-height: 1.6;
-      white-space: pre;
     }
+
+    .output-table {
+      display: grid;
+      grid-template-columns: auto 1fr;
+    }
+
+    .output-line {
+      display: contents;
+    }
+
+    .output-line-num {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      padding: 0 8px 0 12px;
+      color: var(--muted);
+      user-select: none;
+      white-space: nowrap;
+      min-width: 40px;
+    }
+
+    .output-line-content {
+      white-space: pre-wrap;
+      overflow-wrap: break-word;
+      word-break: break-word;
+    }
+
+    .output-line:first-child > .output-line-num,
+    .output-line:first-child > .output-line-content { padding-top: 16px; }
+    .output-line:last-child > .output-line-num,
+    .output-line:last-child > .output-line-content { padding-bottom: 16px; }
 
     .error {
       color: var(--accent);
@@ -211,15 +277,13 @@
 
     .json-toggle:hover::before { color: var(--accent); }
 
-    .json-collapsible {
-      display: inline;
-    }
-
-    .json-collapsible.hidden { display: none; }
-
     .json-ellipsis { display: none; color: var(--muted); cursor: pointer; }
     .json-ellipsis:hover { color: var(--accent); }
-    .json-toggle.collapsed + .json-ellipsis { display: inline; }
+    .json-toggle.collapsed ~ .json-ellipsis { display: inline; }
+
+    .json-lines { display: contents; }
+    .json-lines.hidden { display: none; }
+    .json-lines.hidden > .output-line { display: none; }
 
     .toast {
       position: fixed;
@@ -263,7 +327,10 @@
       <div class="panel-header">Input</div>
       <div class="editor-wrap">
         <div class="line-numbers" id="input-lines">1</div>
-        <textarea id="input" placeholder="Paste your JSON here..." spellcheck="false"></textarea>
+        <div class="input-area">
+          <div class="input-highlight" id="input-highlight"></div>
+          <textarea id="input" placeholder="Paste your JSON here..." spellcheck="false"></textarea>
+        </div>
       </div>
     </div>
     <div class="divider"></div>
@@ -273,7 +340,6 @@
         <span id="status"></span>
       </div>
       <div class="editor-wrap">
-        <div class="line-numbers" id="output-lines"></div>
         <div id="output"></div>
       </div>
     </div>
@@ -289,32 +355,115 @@
     let debounceTimer;
     let parsedJSON = null;
     const inputLines = document.getElementById('input-lines');
-    const outputLines = document.getElementById('output-lines');
+    const inputHighlight = document.getElementById('input-highlight');
 
-    function updateLineNumbers(el, count) {
-      const nums = [];
-      for (let i = 1; i <= count; i++) nums.push(i);
-      el.textContent = nums.join('\n');
+    function highlightInputError(pos) {
+      const text = input.value;
+      if (pos == null || pos < 0 || pos > text.length) {
+        inputHighlight.innerHTML = '';
+        return;
+      }
+      // Underline a small range around the error for visibility
+      const start = pos;
+      const nlPos = text.indexOf('\n', start);
+      const end = Math.min(text.length, nlPos >= 0 ? Math.min(nlPos, start + 10) : start + 10);
+      const actualEnd = Math.max(end, start + 1);
+
+      const before = escapeHtml(text.substring(0, start));
+      const err = escapeHtml(text.substring(start, actualEnd)) || ' ';
+      const after = escapeHtml(text.substring(actualEnd));
+      inputHighlight.innerHTML = before + '<mark class="error-mark">' + err + '</mark>' + after;
+      // Sync scroll
+      inputHighlight.scrollTop = input.scrollTop;
+      inputHighlight.scrollLeft = input.scrollLeft;
     }
+
+    function clearInputHighlight() {
+      inputHighlight.innerHTML = '';
+    }
+
+    // Hidden mirror to measure wrapped line heights in the textarea
+    const inputMirror = document.createElement('div');
+    inputMirror.style.cssText = 'position:absolute;visibility:hidden;overflow:hidden;white-space:pre-wrap;overflow-wrap:break-word;word-break:break-word;';
+    // Copy textarea font styles
+    inputMirror.style.fontFamily = "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace";
+    inputMirror.style.fontSize = '13px';
+    inputMirror.style.lineHeight = '1.6';
+    inputMirror.style.padding = '0 16px';
+    inputMirror.style.boxSizing = 'border-box';
+    document.body.appendChild(inputMirror);
 
     function updateInputLineNumbers() {
-      const count = input.value ? input.value.split('\n').length : 1;
-      updateLineNumbers(inputLines, count);
+      const lines = input.value ? input.value.split('\n') : [''];
+      // Match mirror width to textarea content area
+      inputMirror.style.width = input.clientWidth + 'px';
+
+      // Build measurement divs
+      inputMirror.innerHTML = '';
+      const frag = document.createDocumentFragment();
+      const measureDivs = [];
+      for (const line of lines) {
+        const div = document.createElement('div');
+        div.textContent = line || '\u00a0';
+        frag.appendChild(div);
+        measureDivs.push(div);
+      }
+      inputMirror.appendChild(frag);
+
+      // Read all heights in one reflow
+      const heights = measureDivs.map(d => d.offsetHeight);
+
+      // Build line number elements
+      const scrollTop = inputLines.scrollTop;
+      inputLines.innerHTML = '';
+      const numFrag = document.createDocumentFragment();
+      for (let i = 0; i < lines.length; i++) {
+        const div = document.createElement('div');
+        div.className = 'line-num';
+        div.textContent = i + 1;
+        div.style.height = heights[i] + 'px';
+        numFrag.appendChild(div);
+      }
+      inputLines.appendChild(numFrag);
+      inputLines.scrollTop = scrollTop;
     }
 
-    function syncOutputLineNumbers() {
-      const text = output.innerText;
-      if (!text) { outputLines.textContent = ''; return; }
-      updateLineNumbers(outputLines, text.split('\n').length);
+    function updateOutputBorder() {
+      requestAnimationFrame(() => {
+        const firstNum = output.querySelector('.output-line-num');
+        if (firstNum) {
+          const w = firstNum.offsetWidth;
+          const borderColor = getComputedStyle(document.documentElement).getPropertyValue('--border').trim();
+          output.style.backgroundImage = `linear-gradient(${borderColor}, ${borderColor})`;
+          output.style.backgroundSize = '1px 100%';
+          output.style.backgroundRepeat = 'no-repeat';
+          output.style.backgroundPosition = `${w}px 0`;
+        } else {
+          output.style.backgroundImage = 'none';
+        }
+      });
+    }
+
+    // Renumber visible output lines
+    function renumberOutputLines() {
+      let num = 1;
+      output.querySelectorAll('.output-line').forEach(row => {
+        // Skip lines inside hidden collapsible groups
+        if (row.closest('.json-lines.hidden')) return;
+        const numCell = row.querySelector('.output-line-num');
+        if (numCell) numCell.textContent = num++;
+      });
+      updateOutputBorder();
     }
 
     input.addEventListener('scroll', () => {
       inputLines.scrollTop = input.scrollTop;
+      inputHighlight.scrollTop = input.scrollTop;
+      inputHighlight.scrollLeft = input.scrollLeft;
     });
 
-    output.addEventListener('scroll', () => {
-      outputLines.scrollTop = output.scrollTop;
-    });
+    // Re-sync line numbers when textarea resizes (e.g. window resize)
+    new ResizeObserver(() => updateInputLineNumbers()).observe(input);
 
     input.addEventListener('input', () => {
       updateInputLineNumbers();
@@ -332,28 +481,31 @@
     document.getElementById('btn-clear').addEventListener('click', () => {
       input.value = '';
       output.innerHTML = '';
+      output.style.backgroundImage = 'none';
       status.textContent = '';
       parsedJSON = null;
       updateInputLineNumbers();
-      outputLines.textContent = '';
+      clearInputHighlight();
     });
 
     document.getElementById('btn-expand').addEventListener('click', () => {
       output.querySelectorAll('.json-toggle.collapsed').forEach(el => {
         el.classList.remove('collapsed');
-        const content = el.parentElement.querySelector('.json-collapsible');
-        if (content) content.classList.remove('hidden');
       });
-      syncOutputLineNumbers();
+      output.querySelectorAll('.json-lines.hidden').forEach(el => {
+        el.classList.remove('hidden');
+      });
+      renumberOutputLines();
     });
 
     document.getElementById('btn-collapse').addEventListener('click', () => {
       output.querySelectorAll('.json-toggle:not(.collapsed)').forEach(el => {
         el.classList.add('collapsed');
-        const content = el.parentElement.querySelector('.json-collapsible');
-        if (content) content.classList.add('hidden');
       });
-      syncOutputLineNumbers();
+      output.querySelectorAll('.json-lines:not(.hidden)').forEach(el => {
+        el.classList.add('hidden');
+      });
+      renumberOutputLines();
     });
 
     function showToast(msg) {
@@ -362,23 +514,96 @@
       setTimeout(() => toast.classList.remove('show'), 1500);
     }
 
+    // renderValue returns an array of {html, indent} line objects
+    function renderValue(val, indent) {
+      if (val === null) return [{html: `<span class="json-null">null</span>`, indent}];
+      if (typeof val === 'boolean') return [{html: `<span class="json-bool">${val}</span>`, indent}];
+      if (typeof val === 'number') return [{html: `<span class="json-number">${val}</span>`, indent}];
+      if (typeof val === 'string') return [{html: `<span class="json-string">"${escapeHtml(val)}"</span>`, indent}];
+
+      if (Array.isArray(val)) {
+        if (val.length === 0) return [{html: `<span class="json-bracket">[]</span>`, indent}];
+        return renderCollection(val, null, indent, '[', ']', `${val.length} items`);
+      }
+
+      if (typeof val === 'object') {
+        const keys = Object.keys(val);
+        if (keys.length === 0) return [{html: `<span class="json-bracket">{}</span>`, indent}];
+        return renderCollection(val, keys, indent, '{', '}', `${keys.length} keys`);
+      }
+
+      return [{html: escapeHtml(String(val)), indent}];
+    }
+
+    function renderCollection(val, keys, indent, openBracket, closeBracket, summary) {
+      const isArray = keys === null;
+      const entries = isArray ? val : keys;
+      const id = 'c' + Math.random().toString(36).slice(2, 9);
+
+      // Build inner lines
+      const innerLines = [];
+      entries.forEach((entry, i) => {
+        const key = isArray ? null : entry;
+        const value = isArray ? entry : val[entry];
+        const comma = i < entries.length - 1 ? ',' : '';
+        const childLines = renderValue(value, indent + 1);
+
+        if (childLines.length === 1) {
+          // Single-line value
+          const prefix = key !== null
+            ? `<span class="json-key">"${escapeHtml(key)}"</span>: `
+            : '';
+          innerLines.push({html: prefix + childLines[0].html + comma, indent: indent + 1});
+        } else {
+          // Multi-line value (nested object/array) — first line gets the key prefix
+          const prefix = key !== null
+            ? `<span class="json-key">"${escapeHtml(key)}"</span>: `
+            : '';
+          innerLines.push({html: prefix + childLines[0].html, indent: indent + 1});
+          for (let j = 1; j < childLines.length - 1; j++) {
+            innerLines.push(childLines[j]);
+          }
+          const last = childLines[childLines.length - 1];
+          innerLines.push({html: last.html + comma, indent: last.indent});
+        }
+      });
+
+      const openLine = {
+        html: `<span class="json-toggle" data-target="${id}"></span><span class="json-bracket">${openBracket}</span><span class="json-ellipsis" data-target="${id}"> ${summary} ${closeBracket}</span>`,
+        indent
+      };
+
+      const closeLine = {html: `<span class="json-bracket">${closeBracket}</span>`, indent};
+
+      const result = [openLine];
+      innerLines._collapseId = id;
+      innerLines._isCollapsible = true;
+      result.push(innerLines);
+      result.push(closeLine);
+
+      return result;
+    }
+
     function render() {
       const raw = input.value.trim();
       if (!raw) {
         output.innerHTML = '';
+        output.style.backgroundImage = 'none';
         status.textContent = '';
         parsedJSON = null;
-        outputLines.textContent = '';
+        clearInputHighlight();
         return;
       }
 
       try {
         parsedJSON = JSON.parse(raw);
-        const html = renderValue(parsedJSON, 0);
-        output.innerHTML = html;
+        clearInputHighlight();
+        const tree = renderValue(parsedJSON, 0);
+        lineCounter = 0;
+        const html = buildOutputHtml(tree);
+        output.innerHTML = '<div class="output-table">' + html + '</div>';
         bindToggles();
-
-        syncOutputLineNumbers();
+        updateOutputBorder();
 
         const size = new Blob([raw]).size;
         status.textContent = formatSize(size);
@@ -386,70 +611,64 @@
         parsedJSON = null;
         const match = e.message.match(/position (\d+)/);
         let posInfo = '';
+        let errorPos = null;
         if (match) {
           const pos = parseInt(match[1]);
           const lines = raw.substring(0, pos).split('\n');
           const line = lines.length;
           const col = lines[lines.length - 1].length + 1;
           posInfo = `<div class="error-pos">Line ${line}, Column ${col}</div>`;
+          // Map position from trimmed string back to original input
+          const leadingSpaces = input.value.match(/^\s*/)[0].length;
+          errorPos = pos + leadingSpaces;
         }
+        highlightInputError(errorPos);
         output.innerHTML = `<div class="error">${escapeHtml(e.message)}${posInfo}</div>`;
+        output.style.backgroundImage = 'none';
         status.textContent = 'Error';
-        outputLines.textContent = '';
       }
     }
 
-    function renderValue(val, indent) {
-      if (val === null) return `<span class="json-null">null</span>`;
-      if (typeof val === 'boolean') return `<span class="json-bool">${val}</span>`;
-      if (typeof val === 'number') return `<span class="json-number">${val}</span>`;
-      if (typeof val === 'string') return `<span class="json-string">"${escapeHtml(val)}"</span>`;
+    let lineCounter = 0;
 
-      const pad = '  '.repeat(indent);
-      const padInner = '  '.repeat(indent + 1);
-
-      if (Array.isArray(val)) {
-        if (val.length === 0) return `<span class="json-bracket">[]</span>`;
-        const items = val.map((v, i) => {
-          const comma = i < val.length - 1 ? ',' : '';
-          return `${padInner}${renderValue(v, indent + 1)}${comma}`;
-        }).join('\n');
-
-        return `<span class="json-node"><span class="json-toggle"></span><span class="json-bracket">[</span><span class="json-ellipsis"> ${val.length} items ]</span><span class="json-collapsible">\n${items}\n${pad}</span><span class="json-bracket">]</span></span>`;
+    function buildOutputHtml(items) {
+      let html = '';
+      for (const item of items) {
+        if (Array.isArray(item) && item._isCollapsible) {
+          html += `<div class="json-lines" data-collapse-id="${item._collapseId}">`;
+          html += buildOutputHtml(item);
+          html += '</div>';
+        } else if (Array.isArray(item)) {
+          html += buildOutputHtml(item);
+        } else {
+          lineCounter++;
+          const pad = item.indent > 0 ? `calc(16px + ${item.indent * 2}ch)` : '16px';
+          html += `<div class="output-line"><div class="output-line-num">${lineCounter}</div><div class="output-line-content" style="padding-left:${pad}">${item.html}</div></div>`;
+        }
       }
-
-      if (typeof val === 'object') {
-        const keys = Object.keys(val);
-        if (keys.length === 0) return `<span class="json-bracket">{}</span>`;
-        const entries = keys.map((k, i) => {
-          const comma = i < keys.length - 1 ? ',' : '';
-          return `${padInner}<span class="json-key">"${escapeHtml(k)}"</span>: ${renderValue(val[k], indent + 1)}${comma}`;
-        }).join('\n');
-
-        return `<span class="json-node"><span class="json-toggle"></span><span class="json-bracket">{</span><span class="json-ellipsis"> ${keys.length} keys }</span><span class="json-collapsible">\n${entries}\n${pad}</span><span class="json-bracket">}</span></span>`;
-      }
-
-      return escapeHtml(String(val));
+      return html;
     }
 
     function bindToggles() {
       output.querySelectorAll('.json-toggle').forEach(toggle => {
         toggle.addEventListener('click', () => {
+          const id = toggle.dataset.target;
           toggle.classList.toggle('collapsed');
-          const content = toggle.parentElement.querySelector('.json-collapsible');
-          if (content) content.classList.toggle('hidden');
-          syncOutputLineNumbers();
+          const group = output.querySelector(`.json-lines[data-collapse-id="${id}"]`);
+          if (group) group.classList.toggle('hidden');
+          renumberOutputLines();
         });
       });
 
       output.querySelectorAll('.json-ellipsis').forEach(el => {
         el.addEventListener('click', () => {
-          const toggle = el.parentElement.querySelector('.json-toggle');
+          const id = el.dataset.target;
+          const toggle = output.querySelector(`.json-toggle[data-target="${id}"]`);
           if (toggle) {
             toggle.classList.remove('collapsed');
-            const content = el.parentElement.querySelector('.json-collapsible');
-            if (content) content.classList.remove('hidden');
-            syncOutputLineNumbers();
+            const group = output.querySelector(`.json-lines[data-collapse-id="${id}"]`);
+            if (group) group.classList.remove('hidden');
+            renumberOutputLines();
           }
         });
       });
