@@ -220,18 +220,44 @@
       user-select: none;
       white-space: nowrap;
       min-width: 40px;
+      height: 20.8px;
+      position: relative;
+    }
+
+    .output-line-num .gutter-toggle {
+      position: absolute;
+      left: 2px;
+      top: 50%;
+      transform: translateY(-50%);
+      cursor: pointer;
+      font-size: 8px;
+      color: var(--toggle);
+      opacity: 0;
+      transition: opacity 0.15s;
+      line-height: 1;
+      width: 10px;
+      text-align: center;
+    }
+
+    .output-line-num:hover .gutter-toggle,
+    .output-line-num .gutter-toggle.collapsed {
+      opacity: 1;
+    }
+
+    .output-line-num .gutter-toggle:hover {
+      color: var(--accent);
     }
 
     .output-line-content {
       white-space: pre-wrap;
       overflow-wrap: break-word;
       word-break: break-word;
+      height: 20.8px;
+      display: flex;
+      align-items: center;
     }
 
-    .output-line:first-child > .output-line-num,
-    .output-line:first-child > .output-line-content { padding-top: 16px; }
-    .output-line:last-child > .output-line-num,
-    .output-line:last-child > .output-line-content { padding-bottom: 16px; }
+    .output-table { padding: 16px 0; }
 
     .error {
       color: var(--accent);
@@ -256,26 +282,8 @@
 
     /* Collapsible */
     .json-toggle {
-      cursor: pointer;
-      user-select: none;
-      position: relative;
+      display: none;
     }
-
-    .json-toggle::before {
-      content: '▶';
-      display: inline-block;
-      width: 14px;
-      font-size: 9px;
-      color: var(--toggle);
-      transition: transform 0.15s;
-      transform: rotate(90deg);
-    }
-
-    .json-toggle.collapsed::before {
-      transform: rotate(0deg);
-    }
-
-    .json-toggle:hover::before { color: var(--accent); }
 
     .json-ellipsis { display: none; color: var(--muted); cursor: pointer; }
     .json-ellipsis:hover { color: var(--accent); }
@@ -451,7 +459,19 @@
         // Skip lines inside hidden collapsible groups
         if (row.closest('.json-lines.hidden')) return;
         const numCell = row.querySelector('.output-line-num');
-        if (numCell) numCell.textContent = num++;
+        if (numCell) {
+          // Preserve gutter toggle if present
+          const gutter = numCell.querySelector('.gutter-toggle');
+          if (gutter) {
+            // Remove text nodes (old number), keep the gutter span
+            Array.from(numCell.childNodes).forEach(n => {
+              if (n.nodeType === Node.TEXT_NODE) n.remove();
+            });
+            numCell.appendChild(document.createTextNode(num++));
+          } else {
+            numCell.textContent = num++;
+          }
+        }
       });
       updateOutputBorder();
     }
@@ -495,6 +515,10 @@
       output.querySelectorAll('.json-lines.hidden').forEach(el => {
         el.classList.remove('hidden');
       });
+      output.querySelectorAll('.gutter-toggle.collapsed').forEach(el => {
+        el.classList.remove('collapsed');
+        el.innerHTML = '&#9660;';
+      });
       renumberOutputLines();
     });
 
@@ -504,6 +528,10 @@
       });
       output.querySelectorAll('.json-lines:not(.hidden)').forEach(el => {
         el.classList.add('hidden');
+      });
+      output.querySelectorAll('.gutter-toggle:not(.collapsed)').forEach(el => {
+        el.classList.add('collapsed');
+        el.innerHTML = '&#9654;';
       });
       renumberOutputLines();
     });
@@ -643,20 +671,45 @@
         } else {
           lineCounter++;
           const pad = item.indent > 0 ? `calc(16px + ${item.indent * 2}ch)` : '16px';
-          html += `<div class="output-line"><div class="output-line-num">${lineCounter}</div><div class="output-line-content" style="padding-left:${pad}">${item.html}</div></div>`;
+          // Check if this line has a toggle (collapsible root)
+          const hasToggle = item.html.includes('json-toggle');
+          let gutterHtml = '';
+          if (hasToggle) {
+            // Extract the data-target id from the toggle span
+            const match = item.html.match(/data-target="([^"]+)"/);
+            if (match) {
+              gutterHtml = `<span class="gutter-toggle" data-target="${match[1]}">&#9660;</span>`;
+            }
+          }
+          html += `<div class="output-line"><div class="output-line-num">${gutterHtml}${lineCounter}</div><div class="output-line-content" style="padding-left:${pad}">${item.html}</div></div>`;
         }
       }
       return html;
     }
 
+    function toggleCollapse(id) {
+      const toggle = output.querySelector(`.json-toggle[data-target="${id}"]`);
+      const gutter = output.querySelector(`.gutter-toggle[data-target="${id}"]`);
+      const group = output.querySelector(`.json-lines[data-collapse-id="${id}"]`);
+      if (!toggle) return;
+      const isCollapsed = toggle.classList.toggle('collapsed');
+      if (gutter) {
+        gutter.classList.toggle('collapsed', isCollapsed);
+        gutter.innerHTML = isCollapsed ? '&#9654;' : '&#9660;';
+      }
+      if (group) group.classList.toggle('hidden', isCollapsed);
+      renumberOutputLines();
+    }
+
     function bindToggles() {
       output.querySelectorAll('.json-toggle').forEach(toggle => {
-        toggle.addEventListener('click', () => {
-          const id = toggle.dataset.target;
-          toggle.classList.toggle('collapsed');
-          const group = output.querySelector(`.json-lines[data-collapse-id="${id}"]`);
-          if (group) group.classList.toggle('hidden');
-          renumberOutputLines();
+        toggle.addEventListener('click', () => toggleCollapse(toggle.dataset.target));
+      });
+
+      output.querySelectorAll('.gutter-toggle').forEach(gutter => {
+        gutter.addEventListener('click', (e) => {
+          e.stopPropagation();
+          toggleCollapse(gutter.dataset.target);
         });
       });
 
@@ -664,8 +717,13 @@
         el.addEventListener('click', () => {
           const id = el.dataset.target;
           const toggle = output.querySelector(`.json-toggle[data-target="${id}"]`);
+          const gutter = output.querySelector(`.gutter-toggle[data-target="${id}"]`);
           if (toggle) {
             toggle.classList.remove('collapsed');
+            if (gutter) {
+              gutter.classList.remove('collapsed');
+              gutter.innerHTML = '&#9660;';
+            }
             const group = output.querySelector(`.json-lines[data-collapse-id="${id}"]`);
             if (group) group.classList.remove('hidden');
             renumberOutputLines();
