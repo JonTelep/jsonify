@@ -709,27 +709,8 @@
       });
     }
 
-    // Renumber visible output lines
+    // Update output border after collapse/expand (no renumbering - keep original line numbers)
     function renumberOutputLines() {
-      let num = 1;
-      output.querySelectorAll('.output-line').forEach(row => {
-        // Skip lines inside hidden collapsible groups
-        if (row.closest('.json-lines.hidden')) return;
-        const numCell = row.querySelector('.output-line-num');
-        if (numCell) {
-          // Preserve gutter toggle if present
-          const gutter = numCell.querySelector('.gutter-toggle');
-          if (gutter) {
-            // Remove text nodes (old number), keep the gutter span
-            Array.from(numCell.childNodes).forEach(n => {
-              if (n.nodeType === Node.TEXT_NODE) n.remove();
-            });
-            numCell.appendChild(document.createTextNode(num++));
-          } else {
-            numCell.textContent = num++;
-          }
-        }
-      });
       updateOutputBorder();
     }
 
