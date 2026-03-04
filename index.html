@@ -401,6 +401,15 @@
       border-color: var(--border);
     }
 
+    /* Hidden indent spaces - visually hidden but selectable for copy/paste */
+    .indent-spaces {
+      position: absolute;
+      left: -9999px;
+      opacity: 0;
+      pointer-events: none;
+      white-space: pre;
+    }
+
     @media (max-width: 700px) {
       .container { flex-direction: column; }
       .divider { width: auto; height: 1px; }
@@ -411,6 +420,7 @@
   <header>
     <h1><span>{</span> jsonify <span>}</span> <a href="https://telep.io" target="_blank">by telep.io</a></h1>
     <div class="header-actions">
+      <button id="btn-indent" title="Toggle indent size">2 spaces</button>
       <button id="btn-expand" title="Expand all">Expand All</button>
       <button id="btn-collapse" title="Collapse all">Collapse All</button>
       <button id="btn-copy" title="Copy beautified JSON">Copy</button>
@@ -454,8 +464,10 @@
     const toast = document.getElementById('toast');
     const tabBar = document.getElementById('tab-bar');
     const btnAddTab = document.getElementById('btn-add-tab');
+    const btnIndent = document.getElementById('btn-indent');
     let debounceTimer;
     let parsedJSON = null;
+    let indentSize = 2; // Default indent size (2 or 4 spaces)
     const inputLines = document.getElementById('input-lines');
     const inputHighlight = document.getElementById('input-highlight');
 
@@ -738,8 +750,16 @@
 
     document.getElementById('btn-copy').addEventListener('click', () => {
       if (parsedJSON !== null) {
-        navigator.clipboard.writeText(JSON.stringify(parsedJSON, null, 2))
+        navigator.clipboard.writeText(JSON.stringify(parsedJSON, null, indentSize))
           .then(() => showToast('Copied!'));
+      }
+    });
+
+    btnIndent.addEventListener('click', () => {
+      indentSize = indentSize === 2 ? 4 : 2;
+      btnIndent.textContent = indentSize + ' spaces';
+      if (parsedJSON !== null) {
+        render();
       }
     });
 
@@ -915,8 +935,9 @@
           html += buildOutputHtml(item);
         } else {
           lineCounter++;
-          // Use actual spaces for indentation (2 spaces per level) so copy/paste preserves it
-          const indentSpaces = '  '.repeat(item.indent);
+          // Use actual spaces for indentation so copy/paste preserves it
+          const indentSpaces = ' '.repeat(item.indent * indentSize);
+          const pad = item.indent > 0 ? `calc(16px + ${item.indent * indentSize}ch)` : '16px';
           // Check if this line has a toggle (collapsible root)
           const hasToggle = item.html.includes('json-toggle');
           let gutterHtml = '';
@@ -928,7 +949,7 @@
             }
           }
           const numAttr = hasToggle && gutterHtml ? ` data-toggle-target="${gutterHtml.match(/data-target="([^"]+)"/)[1]}" style="cursor:pointer"` : '';
-          html += `<div class="output-line"><div class="output-line-num"${numAttr}>${gutterHtml}${lineCounter}</div><div class="output-line-content" style="padding-left:16px">${indentSpaces}${item.html}</div></div>`;
+          html += `<div class="output-line"><div class="output-line-num"${numAttr}>${gutterHtml}${lineCounter}</div><div class="output-line-content" style="padding-left:${pad}"><span class="indent-spaces">${indentSpaces}</span>${item.html}</div></div>`;
         }
       }
       return html;
