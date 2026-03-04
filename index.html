@@ -915,7 +915,8 @@
           html += buildOutputHtml(item);
         } else {
           lineCounter++;
-          const pad = item.indent > 0 ? `calc(16px + ${item.indent * 2}ch)` : '16px';
+          // Use actual spaces for indentation (2 spaces per level) so copy/paste preserves it
+          const indentSpaces = '  '.repeat(item.indent);
           // Check if this line has a toggle (collapsible root)
           const hasToggle = item.html.includes('json-toggle');
           let gutterHtml = '';
@@ -927,7 +928,7 @@
             }
           }
           const numAttr = hasToggle && gutterHtml ? ` data-toggle-target="${gutterHtml.match(/data-target="([^"]+)"/)[1]}" style="cursor:pointer"` : '';
-          html += `<div class="output-line"><div class="output-line-num"${numAttr}>${gutterHtml}${lineCounter}</div><div class="output-line-content" style="padding-left:${pad}">${item.html}</div></div>`;
+          html += `<div class="output-line"><div class="output-line-num"${numAttr}>${gutterHtml}${lineCounter}</div><div class="output-line-content" style="padding-left:16px">${indentSpaces}${item.html}</div></div>`;
         }
       }
       return html;
